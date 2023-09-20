@@ -2,7 +2,7 @@ import json
 import sys
 from datetime import datetime
 from typing import List, Dict, Union
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, ForeignKey, Table, exc, func, select, join
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, Float, ForeignKey, exc, func, select, join, distinct
 from sqlalchemy.orm import declarative_base, Session
 from sqlalchemy.orm import sessionmaker, relationship
 from collections import defaultdict
@@ -14,7 +14,8 @@ order_product = Table(
     'order_product',
     Base.metadata,
     Column('order_id', Integer, ForeignKey('orders.id'), primary_key=True),
-    Column('product_id', Integer, ForeignKey('products.id'), primary_key=True)
+    Column('product_id', Integer, ForeignKey('products.id'), primary_key=True),
+    Column('quantity', Integer, nullable=False)
 )
 
 class User(Base):
@@ -48,7 +49,7 @@ class OrdersService:
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
 
-    def add_to_session(self, session: Session, object: Union[User, Product, Order], check_if_exists: bool = True) -> Session: 
+    def add_to_session(self, session: Session, object: Union[User, Product, Order], check_if_exists: bool = True):
         object_exists = False
         if check_if_exists:
             object_exists = session.query(type(object)).filter(type(object).id == object.id).scalar()
@@ -57,7 +58,6 @@ class OrdersService:
             session.merge(object)
         elif not object_exists:
             session.add(object)
-        return session
 
     def try_commit(self, session: Session):
         try:
@@ -66,14 +66,26 @@ class OrdersService:
             session.rollback()
             sys.stderr.write(str(e) + '\n')
 
+    def deduplicate_list_of_order_product_items(self, list_items):
+        seen = set()
+        deduplicated_list = []
+        for item in list_items:
+            # example item -> {'order_id': 3, 'product_id': 6, 'quantity': 1}
+            id = (item["order_id"], item["product_id"])
+            if id not in seen:
+                seen.add(id)
+                deduplicated_list.append(item)
+        return deduplicated_list
+
     def load_data_from_file(self, data_file: str):
         session = self.Session()
 
         num_lines = 0
         with open(data_file, 'r') as file:
             for line in file:
-                print(f'\nProcessing order: {num_lines}')
+                sys.stdout.write(f'\nProcessing order: {num_lines}\n')
                 data = json.loads(line)
+
                 # Check the order properties presence before loading
                 for property in ['id', 'created', 'products', 'user']:
                     if property not in list(data.keys()):
@@ -81,42 +93,60 @@ class OrdersService:
                         continue
 
                 order_id = data["id"]
-                user = data["user"]
+                user_data = data["user"]
+                
                 # Check the user properties presence before loading
                 for property in ["id", "name", "city"]:
-                    if property not in user.keys():
+                    if property not in user_data.keys():
                         sys.stderr.write(f'User in order with id: "{order_id}" is missing the "{property}" property.\n')
                         continue
 
-                self.add_to_session(session, User(id=user['id'], name=user['name'], city=user['city']))
+                # Create a User object
+                user = User(id=user_data['id'], name=user_data['name'], city=user_data['city'])
+                self.add_to_session(session, user)
+
+                # Add the order object to the session but don't commit it yet
+                order = Order(id=order_id, user_id=user.id, created=datetime.fromtimestamp(data['created']))
+
+                # Commit the Order object to the database
+                self.add_to_session(session, order)
                 self.try_commit(session)
 
-                products = []
+                product_ids = []
+                quantity_map = defaultdict(int)
                 for product_data in data['products']:
                     # Check the product properties presence before loading
                     for attr in ["id", "name", "price"]:
                         if attr not in product_data.keys():
-                            sys.stderr.write(f'Product in order with id: {order_id} is missing the "{attr}" attribute.\n')
+                            sys.stderr.write(f'Product in order with id: "{order_id}" is missing the "{attr}" attribute.\n')
                             continue
                     product_id = product_data['id']
-                    existing_product = session.query(Product).filter_by(id=product_id).first()
-                    if existing_product:
-                        products.append(existing_product)
-                    else:
-                        product = Product(id=product_id, name=product_data['name'], price=product_data['price'])
-                        self.add_to_session(session, product, check_if_exists=False)
-                        self.try_commit(session)
-                        products.append(product)
+                    quantity_map[product_id] += 1
+                    product_ids.append(product_id)
 
-                order = Order(id=order_id, user_id=user['id'], created=datetime.fromtimestamp(data['created']), products=products)
-                self.add_to_session(session, order)
+                # Add the Product objects to the session and commit them
+                for product_id in product_ids:
+                    product = Product(id=product_id, name=product_data['name'], price=product_data['price'])
+                    self.add_to_session(session, product)
+                    self.try_commit(session)
+
+                # Now, you can insert data into the order_product table if it doesn't already exist
+                order_product_data = []
+                for product_id in product_ids:
+                    if not session.query(order_product).filter(order_product.c.order_id == order.id, order_product.c.product_id == product_id).count():
+                        order_product_data.append({'order_id': order.id, 'product_id': product_id, 'quantity': quantity_map[product_id]})
+
+                # There are duplicates in order_product_data which are caused by multiple occurrences of same product in one order.
+                order_product_data = self.deduplicate_list_of_order_product_items(order_product_data)
+
+                if order_product_data:
+                    session.execute(order_product.insert().values(order_product_data))
+
+                # Commit the changes again to insert order_product records if any
                 self.try_commit(session)
-                # order.products = products
-                # session.merge(order)
-                # self.try_commit(session)
 
                 num_lines += 1
-        print(f'Total lines processed: {num_lines}')
+        sys.stdout.write(f'Total lines processed: {num_lines}\n')
 
     def get_orders_in_time_range(self, start_time: str, end_time: str) -> List[Dict]:
         session = self.Session()
@@ -129,35 +159,22 @@ class OrdersService:
 
     def get_top_users_by_purchase(self, num_users: int) -> List[Dict]:
         session = self.Session()
-        stmt = select([Order.user_id, func.count()]).select_from(join(Order, order_product, isouter=True).join(Product, isouter=True)).group_by(Order.user_id)
-        
-        user_purchase_counts = defaultdict(int)
 
         # Use SQLAlchemy ORM to construct the query
         query = (
-            session.query(User.id, func.count(Order.id).label('purchase_count'))
-            .outerjoin(Order)
+            session.query(User.id, func.count(distinct(order_product.c.product_id)).label('purchase_count'))
+            .join(Order)
+            .join(order_product, Order.id == order_product.c.order_id)
+            .join(Product, order_product.c.product_id == Product.id)
             .group_by(User.id)
-            .order_by(func.count(Order.id).desc())
+            .order_by(func.count(distinct(order_product.c.product_id)).desc())
             .limit(num_users)
         )
 
-        for user_id, purchase_count in query:
-            user_purchase_counts[user_id] = purchase_count
-
-        top_users = [{"user_id": user_id, "purchase_count": purchase_count} for user_id, purchase_count in user_purchase_counts.items()]
+        top_users = [{"user_id": user_id, "purchase_count": purchase_count} for user_id, purchase_count in query]
         session.close()
 
         return top_users
-        # user_purchase_counts = defaultdict(int)
-        # for user_id, purchase_count in session.query(Order.user_id, func.count(Order.products)).group_by(Order.user_id):
-        #     user_purchase_counts[user_id] = purchase_count
-
-        # top_users = [{"user_id": user_id, "purchase_count": purchase_count} for user_id, purchase_count in sorted(user_purchase_counts.items(), key=lambda x: x[1], reverse=True)[:num_users]]
-
-        # session.close()
-
-        # return top_users
 
 if __name__ == '__main__':
     db_url = 'postgresql://postgres:password@localhost:5432/meiro'
