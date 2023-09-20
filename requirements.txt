@@ -1,0 +1,3 @@
+pydantic
+psycopg2
+sqlalchemy
