@@ -222,6 +222,7 @@ class OrdersService:
         return top_users
 
 if __name__ == '__main__':
+    # TODO: implement the argument parsing for db_url and data_file
     db_url = 'postgresql://postgres:password@localhost:5432/meiro'
     service = OrdersService(db_url)
 
