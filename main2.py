@@ -26,7 +26,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String)
     city = Column(String)
-    orders = relationship("Order", back_populates="user")
+    orders = relationship('Order', back_populates='user')
 
 class Product(Base):
     __tablename__ = 'products'
@@ -34,7 +34,7 @@ class Product(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String)
     price = Column(Float)
-    orders = relationship("Order", secondary=order_product, back_populates="products")
+    orders = relationship('Order', secondary=order_product, back_populates='products')
 
 class Order(Base):
     __tablename__ = 'orders'
@@ -42,8 +42,8 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     created = Column(DateTime)
-    user = relationship("User", back_populates="orders")
-    products = relationship("Product", secondary=order_product, back_populates="orders")
+    user = relationship('User', back_populates='orders')
+    products = relationship('Product', secondary=order_product, back_populates='orders')
 
 class OrdersService:
     def __init__(self, db_url: str):
@@ -73,19 +73,21 @@ class OrdersService:
         deduplicated_list = []
         for item in list_items:
             # example item -> {'order_id': 3, 'product_id': 6, 'quantity': 1}
-            id = (item["order_id"], item["product_id"])
+            id = (item['order_id'], item['product_id'])
             if id not in seen:
                 seen.add(id)
                 deduplicated_list.append(item)
         return deduplicated_list
 
     def load_data_from_file(self, data_file: str):
+        """Loads the data from given file to the database with respect to object relationships."""
+
         session = self.Session()
 
         num_lines = 0
         with open(data_file, 'r') as file:
             for line in file:
-                sys.stdout.write(f'\nProcessing order: {num_lines}\n')
+                sys.stdout.write(f'\nProcessing order: {num_lines}')
                 data = json.loads(line)
 
                 # Check the order properties presence before loading
@@ -94,11 +96,11 @@ class OrdersService:
                         sys.stderr.write(f'Order is missing the "{property}" property.\n')
                         continue
 
-                order_id = data["id"]
-                user_data = data["user"]
+                order_id = data['id']
+                user_data = data['user']
                 
                 # Check the user properties presence before loading
-                for property in ["id", "name", "city"]:
+                for property in ['id', 'name', 'city']:
                     if property not in user_data.keys():
                         sys.stderr.write(f'User in order with id: "{order_id}" is missing the "{property}" property.\n')
                         continue
@@ -116,7 +118,7 @@ class OrdersService:
                 quantity_map = defaultdict(int)
                 for product_data in data['products']:
                     # Check the product properties presence before loading
-                    for attr in ["id", "name", "price"]:
+                    for attr in ['id', 'name', 'price']:
                         if attr not in product_data.keys():
                             sys.stderr.write(f'Product in order with id: "{order_id}" is missing the "{attr}" attribute.\n')
                             continue
