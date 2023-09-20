@@ -2,10 +2,12 @@ import json
 import sys
 from datetime import datetime
 from typing import List, Dict, Union
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, Float, ForeignKey, exc, func, select, join, distinct
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, Float, ForeignKey, exc, func, text
 from sqlalchemy.orm import declarative_base, Session
 from sqlalchemy.orm import sessionmaker, relationship
 from collections import defaultdict
+
+DATE_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 Base = declarative_base()
 
