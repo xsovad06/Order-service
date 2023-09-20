@@ -146,32 +146,75 @@ class OrdersService:
                 self.try_commit(session)
 
                 num_lines += 1
+
         sys.stdout.write(f'Total lines processed: {num_lines}\n')
 
+    def get_product_ids_for_order(self, session: Session, order: Order) -> List[int]:
+        """Helper method to get list of product ids for a given order."""
+
+        order_products = session.query(order_product).filter(order_product.c.order_id == order.id).all()
+        product_ids = []
+        # Append the product_id to the order number of times according to the order_product quantity column
+        for _, product_id, quantity in order_products:
+            product_ids += [product_id for i in range(quantity)]
+        return product_ids
+
     def get_orders_in_time_range(self, start_time: str, end_time: str) -> List[Dict]:
+        """Method filter out orders which are out of a given time range and retuns only those in that time range."""
+
         session = self.Session()
 
-        orders = session.query(Order).filter(Order.created.between(start_time, end_time)).all()
-
-        result = [{"id":order.id, "user_id": order.user_id, "product_ids": [product.id for product in order.products], "created": order.created} for order in orders]
+        orders = session.query(Order).filter(Order.created.between(start_time, end_time)).order_by(Order.created).all()
+        result = []
+        for order in orders:
+            result.append({
+                "id":order.id,
+                "user_id": order.user_id,
+                "product_ids": self.get_product_ids_for_order(session, order),
+                "created": order.created.strftime(DATE_TIME_FORMAT)
+                }
+            )
         session.close()
         return result
 
-    def get_top_users_by_purchase(self, num_users: int) -> List[Dict]:
+    def get_top_users_by_product_purchase_count(self, num_users: int) -> List[Dict]:
+        """Method returns given number of user who has the most products ordered."""
+
         session = self.Session()
 
-        # Use SQLAlchemy ORM to construct the query
-        query = (
-            session.query(User.id, func.count(distinct(order_product.c.product_id)).label('purchase_count'))
-            .join(Order)
+        # Get the products count for each order
+        subquery_order = (
+            session.query(Order.id.label('order_id'), func.sum(order_product.c.quantity).label('product_quantity'))
             .join(order_product, Order.id == order_product.c.order_id)
-            .join(Product, order_product.c.product_id == Product.id)
-            .group_by(User.id)
-            .order_by(func.count(distinct(order_product.c.product_id)).desc())
+            .group_by(Order.id)
+            .subquery()
+        )
+        # Aggregate by users which gives the final product count for each user
+        subquery_aggregated = (
+            session.query(Order.user_id, func.sum(subquery_order.c.product_quantity).label('purchase_count'))
+            .join(subquery_order, subquery_order.c.order_id == Order.id)
+            .group_by(Order.user_id)
+            .order_by(text('purchase_count DESC'))
             .limit(num_users)
+            .subquery()
+        )
+        # Join with users for user details
+        query = (
+            session.query(User.id, User.name, User.city, subquery_aggregated.c.purchase_count)
+            .join(subquery_aggregated, subquery_aggregated.c.user_id == User.id)
+            .order_by(subquery_aggregated.c.purchase_count.desc())
         )
 
-        top_users = [{"user_id": user_id, "purchase_count": purchase_count} for user_id, purchase_count in query]
+        top_users = []
+        for user_id, user_name, user_city, purchase_count in query:
+            top_users.append({
+                    'user_id': user_id,
+                    'user_name': user_name,
+                    'user_city': user_city,
+                    'purchase_count': purchase_count
+                }
+            )
+
         session.close()
 
         return top_users
@@ -183,15 +226,15 @@ if __name__ == '__main__':
     data_file = 'data-example.ndjson'
     service.load_data_from_file(data_file)
 
-    start_time = '2018-10-25 17:00:00'
+    start_time = '2018-10-20 17:00:00'
     end_time = '2018-10-25 22:00:00'
     orders_in_time_range = service.get_orders_in_time_range(start_time, end_time)
-    print("Orders in time range:")
+    sys.stdout.write('Orders in time range:\n')
     for order in orders_in_time_range:
-        print(order)
+        sys.stdout.write(f'Order id: {order["id"]}, created: {order["created"]}, product_ids: {order["product_ids"]}, user id: {order["user_id"]}\n')
 
-    # num_top_users = 5
-    # top_users = service.get_top_users_by_purchase(num_top_users)
-    # print("\nTop users by purchase:")
-    # for user in top_users:
-    #     print(f"User ID: {user['user_id']}, Purchase Count: {user['purchase_count']}")
+    num_top_users = 5
+    top_users = service.get_top_users_by_product_purchase_count(num_top_users)
+    sys.stdout.write('\nTop users by purchase:\n')
+    for user in top_users:
+        sys.stdout.write(f'User id: {user["user_id"]}, name: {user["user_name"]}, city: {user["user_city"]}, purchase products count: {user["purchase_count"]}\n')
