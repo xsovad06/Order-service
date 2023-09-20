@@ -107,10 +107,8 @@ class OrdersService:
                 user = User(id=user_data['id'], name=user_data['name'], city=user_data['city'])
                 self.add_to_session(session, user)
 
-                # Add the order object to the session but don't commit it yet
+                # Add the Order object to the session and commit
                 order = Order(id=order_id, user_id=user.id, created=datetime.fromtimestamp(data['created']))
-
-                # Commit the Order object to the database
                 self.add_to_session(session, order)
                 self.try_commit(session)
 
