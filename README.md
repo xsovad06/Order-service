@@ -21,8 +21,8 @@ python3 main.py -d <database_url> -f <ndjson-file-path>
 ```
 options:
 -  `-h`, `--help` - show this help message and exit
--  `-f <ndjson-file-path>`, `--file-path <ndjson-file-path>` - Path to the file to process in ndjson format.
--  `-d <database_url>`, `--database-url <database_url>` - URL to the database.
+-  `-f <ndjson-file-path>`, `--file-path <ndjson-file-path>` - Path to the file to process in ndjson format (**Required**).
+-  `-d <database_url>`, `--database-url <database_url>` - URL to the database (**Required**).
 
 **Contrete example**
 ```bash
