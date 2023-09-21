@@ -1,5 +1,6 @@
 import json
 import sys
+import argparse
 from datetime import datetime
 from typing import List, Dict, Union
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, Float, ForeignKey, exc, func, text
@@ -8,6 +9,19 @@ from sqlalchemy.orm import sessionmaker, relationship
 from collections import defaultdict
 
 DATE_TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+def parse_args():
+  """Parses the program arguments and returns a dictionary of argument values.
+
+  Returns:
+    A dictionary of argument values.
+  """
+
+  parser = argparse.ArgumentParser(description='Process two program arguments.')
+  parser.add_argument('-f', '--data-file-path', type=str, help='Path to the file to process.', required=True)
+  parser.add_argument('-d', '--database-url', type=str, help='URL to the database.', required=True)
+  args = parser.parse_args()
+  return args
 
 Base = declarative_base()
 
@@ -88,7 +102,11 @@ class OrdersService:
         with open(data_file, 'r') as file:
             for line in file:
                 sys.stdout.write(f'\nProcessing order: {num_lines}')
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    sys.stderr.write('Incorrect data file format.\n')
+                    break
 
                 # Check the order properties presence before loading
                 for property in ['id', 'created', 'products', 'user']:
@@ -222,12 +240,13 @@ class OrdersService:
         return top_users
 
 if __name__ == '__main__':
-    # TODO: implement the argument parsing for db_url and data_file
-    db_url = 'postgresql://postgres:password@localhost:5432/meiro'
-    service = OrdersService(db_url)
+    args = parse_args()
 
-    data_file = 'data-example.ndjson'
-    service.load_data_from_file(data_file)
+    # db_url = 'postgresql://postgres:password@localhost:5432/meiro'
+    service = OrdersService(args.database_url)
+
+    # data_file = 'data.ndjson'
+    service.load_data_from_file(args.data_file_path)
 
     start_time = '2018-10-20 17:00:00'
     end_time = '2018-10-25 22:00:00'
