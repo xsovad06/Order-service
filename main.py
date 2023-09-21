@@ -60,29 +60,40 @@ class Order(Base):
     products = relationship('Product', secondary=order_product, back_populates='orders')
 
 class OrdersService:
+    """Main class for processing orders and accessing data about orders."""
+
     def __init__(self, db_url: str):
+        try:
+            self.engine = create_engine(db_url)
+        except exc.OperationalError as e:
+            sys.stderr.write(str(e.__dict__['orig']))
+            raise
         self.engine = create_engine(db_url)
         self.Session = sessionmaker(bind=self.engine)
         Base.metadata.create_all(self.engine)
 
-    def add_to_session(self, session: Session, object: Union[User, Product, Order], check_if_exists: bool = True):
-        object_exists = False
-        if check_if_exists:
-            object_exists = session.query(type(object)).filter(type(object).id == object.id).scalar()
+    def __add_to_session(self, session: Session, object: Union[User, Product, Order]):
+        """Helper method to which check the presence of an object before adding it to the session."""
+
+        object_exists = session.query(type(object)).filter(type(object).id == object.id).scalar()
 
         if object_exists:
             session.merge(object)
         elif not object_exists:
             session.add(object)
 
-    def try_commit(self, session: Session):
+    def __try_commit(self, session: Session):
+        """Helper method which check if the commit is successful otherwise rollback the transaction."""
+
         try:
             session.commit()
         except exc.SQLAlchemyError as e:
             session.rollback()
             sys.stderr.write(str(e) + '\n')
 
-    def deduplicate_list_of_order_product_items(self, list_items):
+    def __deduplicate_list_of_order_product_items(self, list_items: List[Dict]) -> List[Dict]:
+        """Helper method which remove the same order-product items from the given list."""
+
         seen = set()
         deduplicated_list = []
         for item in list_items:
@@ -125,12 +136,12 @@ class OrdersService:
 
                 # Create a User object
                 user = User(id=user_data['id'], name=user_data['name'], city=user_data['city'])
-                self.add_to_session(session, user)
+                self.__add_to_session(session, user)
 
                 # Add the Order object to the session and commit
                 order = Order(id=order_id, user_id=user.id, created=datetime.fromtimestamp(data['created']))
-                self.add_to_session(session, order)
-                self.try_commit(session)
+                self.__add_to_session(session, order)
+                self.__try_commit(session)
 
                 product_ids = []
                 quantity_map = defaultdict(int)
@@ -147,8 +158,8 @@ class OrdersService:
                 # Add the Product objects to the session and commit them
                 for product_id in product_ids:
                     product = Product(id=product_id, name=product_data['name'], price=product_data['price'])
-                    self.add_to_session(session, product)
-                    self.try_commit(session)
+                    self.__add_to_session(session, product)
+                    self.__try_commit(session)
 
                 # Now, you can insert data into the order_product table if it doesn't already exist
                 order_product_data = []
@@ -157,19 +168,19 @@ class OrdersService:
                         order_product_data.append({'order_id': order.id, 'product_id': product_id, 'quantity': quantity_map[product_id]})
 
                 # There are duplicates in order_product_data which are caused by multiple occurrences of same product in one order.
-                order_product_data = self.deduplicate_list_of_order_product_items(order_product_data)
+                order_product_data = self.__deduplicate_list_of_order_product_items(order_product_data)
 
                 if order_product_data:
                     session.execute(order_product.insert().values(order_product_data))
 
                 # Commit the changes again to insert order_product records if any
-                self.try_commit(session)
+                self.__try_commit(session)
 
                 num_lines += 1
 
         sys.stdout.write(f'Total lines processed: {num_lines}\n')
 
-    def get_product_ids_for_order(self, session: Session, order: Order) -> List[int]:
+    def __get_product_ids_for_order(self, session: Session, order: Order) -> List[int]:
         """Helper method to get list of product ids for a given order."""
 
         order_products = session.query(order_product).filter(order_product.c.order_id == order.id).all()
@@ -190,7 +201,7 @@ class OrdersService:
             result.append({
                 "id":order.id,
                 "user_id": order.user_id,
-                "product_ids": self.get_product_ids_for_order(session, order),
+                "product_ids": self.__get_product_ids_for_order(session, order),
                 "created": order.created.strftime(DATE_TIME_FORMAT)
                 }
             )
