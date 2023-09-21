@@ -17,9 +17,18 @@ pip install -r requirements.txt
 ## Usage
 If you already have installed all the dependencies, just run the following command:
 ```bash
-python3 main.py <ndjson-file-path>
+python3 main.py -d <database_url> -f <ndjson-file-path>
 ```
-- `<ndjson-file-path>` - represents the path to the oders file in ndjson format
+options:
+-  `-h`, `--help` - show this help message and exit
+-  `-f <ndjson-file-path>`, `--file-path <ndjson-file-path>` - Path to the file to process in ndjson format.
+-  `-d <database_url>`, `--database-url <database_url>` - URL to the database.
+
+**Contrete example**
+```bash
+python3 main.py -d postgresql://postgres:password@localhost:5432/meiro -f data-example.ndjson
+```
+
 
 ### Local DB setup
 ```bash
